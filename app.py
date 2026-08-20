@@ -4,7 +4,6 @@ import datetime
 import re
 import io
 import requests
-import base64
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(layout="wide", page_title="OnAir Monitor")
@@ -31,7 +30,7 @@ HEADER_ROW_INDEX = 4
 MATERIAL_LIST = ["S1", "S2", "S3", "D1", "D2", "D3", "P2", "X5", "R3", "R4", "R5", "R6", "OS", "FL"]
 
 def fetch_excel_from_gas(target_date):
-    """GAS Web API 経由で指定日の Excel ファイルを取得"""
+    """GASからファイルIDを取得し、Google Driveから直接ダウンロードする"""
     date_str = target_date.strftime('%Y%m%d')
     try:
         gas_url = st.secrets.get("gas_api_url", "")
@@ -39,16 +38,11 @@ def fetch_excel_from_gas(target_date):
             st.error("【設定エラー】Secretsに 'gas_api_url' が正しく設定されていません。")
             return None
             
-        # ★ Googleのボット弾きを回避するため、ブラウザからのアクセスに偽装する
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        
-        # HTTP通信 (リダイレクトを許可)
-        response = requests.get(gas_url, params={"date": date_str}, headers=headers, timeout=20, allow_redirects=True)
+        # 1. GASにアクセスしてファイルIDを要求する
+        response = requests.get(gas_url, params={"date": date_str}, timeout=20, allow_redirects=True)
         
         if response.status_code != 200:
-            st.error(f"【GAS通信エラー】ステータスコード: {response.status_code}")
+            st.error(f"【通信エラー】GASへのアクセスに失敗しました (Status: {response.status_code})")
             return None
             
         text = response.text.strip()
@@ -57,20 +51,33 @@ def fetch_excel_from_gas(target_date):
             st.error(f"【GAS内部エラー】{text}")
             return None
         elif text == "File Not Found":
-            st.warning(f"【GAS応答】{date_str} のファイルがDrive内で見つかりませんでした。")
+            st.warning(f"【見つかりません】{date_str} の進行表がGoogle Driveにありません。")
             return None
         elif text == "Error: Date parameter missing":
             st.error("【GAS応答】日付パラメータが不足しています。")
             return None
-        elif text.startswith("<!DOCTYPE") or text.startswith("<html"):
-            st.error("【Googleブロック】プログラムからのアクセスがGoogleに弾かれました。以下の詳細内容を確認してください。")
-            with st.expander("詳細エラー内容(HTML)を開く"):
-                st.code(text[:1000]) # どんなエラー画面が返ってきているか確認用
-            return None
             
-        # Base64デコードしてバイナリに戻す
-        file_bytes = base64.b64decode(text)
-        return io.BytesIO(file_bytes)
+        # 2. ファイルIDを正しく受け取れた場合、Google Driveから直接ダウンロード！
+        if text.startswith("FILE_ID:"):
+            file_id = text.split("FILE_ID:")[1]
+            
+            # ダイレクトダウンロード用URL
+            download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            dl_response = requests.get(download_url, timeout=20)
+            
+            if dl_response.status_code == 200:
+                # 成功！バイナリデータを返す
+                return io.BytesIO(dl_response.content)
+            else:
+                st.error(f"【Drive取得エラー】ファイルのダウンロードに失敗しました (Status: {dl_response.status_code})")
+                return None
+        else:
+            # HTMLが返ってきてしまった場合（ボット弾き）
+            st.error("【Googleブロック】アクセスが弾かれました。Driveフォルダの権限が「リンクを知っている全員」になっているか確認してください。")
+            with st.expander("詳細エラー内容(HTML)を開く"):
+                st.code(text[:1000])
+            return None
+
     except Exception as e:
         st.error(f"【取得エラー】({date_str}): {e}")
         return None
