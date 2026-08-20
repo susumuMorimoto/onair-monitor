@@ -12,6 +12,13 @@ st.set_page_config(layout="wide", page_title="OnAir Monitor")
 # Auto-refresh every 60 seconds
 st_autorefresh(interval=60 * 1000, key="datarefresh")
 
+# 日本時間 (JST: UTC+9) のタイムゾーン定義
+JST = datetime.timezone(datetime.timedelta(hours=9))
+
+def get_jst_now():
+    """日本時間の現在日時を取得"""
+    return datetime.datetime.now(JST)
+
 # Constants for Excel Columns
 COL_TRIGGER = 2
 COL_TIME = 3
@@ -115,7 +122,7 @@ def load_data_for_date(target_date):
                         
                         if h >= 24:
                             h = h % 24
-                        t = datetime.datetime.time(h, m, s) if hasattr(datetime, 'time') else datetime.time(h, m, s)
+                        t = datetime.time(h, m, s)
                     else:
                         t = datetime.datetime.strptime(t_str, "%H:%M:%S").time()
             except (ValueError, AttributeError, TypeError, IndexError):
@@ -236,10 +243,8 @@ def main():
         </style>
     """, unsafe_allow_html=True)
 
-    today = datetime.datetime.now().date()
-    tomorrow = today + datetime.timedelta(days=1)
+    now_dt = get_jst_now()
     
-    now_dt = datetime.datetime.now()
     if now_dt.hour < 5:
         display_date = now_dt.date() - datetime.timedelta(days=1)
         display_hour = now_dt.hour + 24
@@ -262,6 +267,9 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
+    today = now_dt.date()
+    tomorrow = today + datetime.timedelta(days=1)
+    
     df1 = load_data_for_date(today)
     df2 = load_data_for_date(tomorrow)
     
@@ -276,8 +284,8 @@ def main():
         
     df = df.sort_values('datetime')
     
-    now = datetime.datetime.now()
-    candidates = df[df['datetime'] <= now]
+    now_naive = now_dt.replace(tzinfo=None)
+    candidates = df[df['datetime'] <= now_naive]
     start_index = 0
     if not candidates.empty:
         start_index = candidates.index[-1]
