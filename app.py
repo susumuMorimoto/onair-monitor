@@ -34,30 +34,38 @@ def fetch_excel_from_gas(target_date):
     """GAS Web API 経由で指定日の Excel ファイルを取得"""
     date_str = target_date.strftime('%Y%m%d')
     try:
-        if "gas_api_url" not in st.secrets:
-            st.error("【設定エラー】Secretsに 'gas_api_url' が設定されていません。")
-            return None
-            
-        gas_url = st.secrets["gas_api_url"]
+        gas_url = st.secrets.get("gas_api_url", "")
         if not gas_url or not gas_url.startswith("http"):
-            st.error("【設定エラー】Secretsの 'gas_api_url' の形式が正しくありません。")
+            st.error("【設定エラー】Secretsに 'gas_api_url' が正しく設定されていません。")
             return None
             
-        response = requests.get(gas_url, params={"date": date_str}, timeout=15)
+        # ★ Googleのボット弾きを回避するため、ブラウザからのアクセスに偽装する
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        # HTTP通信 (リダイレクトを許可)
+        response = requests.get(gas_url, params={"date": date_str}, headers=headers, timeout=20, allow_redirects=True)
         
         if response.status_code != 200:
             st.error(f"【GAS通信エラー】ステータスコード: {response.status_code}")
             return None
             
         text = response.text.strip()
-        if text == "File Not Found":
+        
+        if text.startswith("GAS_INTERNAL_ERROR:"):
+            st.error(f"【GAS内部エラー】{text}")
+            return None
+        elif text == "File Not Found":
             st.warning(f"【GAS応答】{date_str} のファイルがDrive内で見つかりませんでした。")
             return None
         elif text == "Error: Date parameter missing":
             st.error("【GAS応答】日付パラメータが不足しています。")
             return None
         elif text.startswith("<!DOCTYPE") or text.startswith("<html"):
-            st.error("【アクセス権限エラー】GASが認証画面(HTML)を返しています。GASのデプロイ管理で『アクセスできるユーザー』を『全員』に設定してください。")
+            st.error("【Googleブロック】プログラムからのアクセスがGoogleに弾かれました。以下の詳細内容を確認してください。")
+            with st.expander("詳細エラー内容(HTML)を開く"):
+                st.code(text[:1000]) # どんなエラー画面が返ってきているか確認用
             return None
             
         # Base64デコードしてバイナリに戻す
@@ -321,7 +329,7 @@ def main():
         "X5": "white", "放送休止": "white", "P2": "white"
     }
     
-    html_content = '<div style="display: flex; overflow-x: auto; white-space: nowrap; height: 95vh; width: 100%; gap: 0px; padding-top: 55px; margin-top: -40px; box-sizing: border-box;">'
+    html_content = '<div style="display: flex; overflow-x: auto; white-space: nowrap; height: 95vh; width: 100%; gap: 0px; padding-top: 55px; margin-margin-top: -40px; box-sizing: border-box;">'
     
     last_date_display = None
     
@@ -393,3 +401,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
