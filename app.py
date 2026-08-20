@@ -30,21 +30,41 @@ COL_PROGRAM_J = 9
 HEADER_ROW_INDEX = 4
 MATERIAL_LIST = ["S1", "S2", "S3", "D1", "D2", "D3", "P2", "X5", "R3", "R4", "R5", "R6", "OS", "FL"]
 
-# GAS API URL (Streamlit secrets から取得)
 def fetch_excel_from_gas(target_date):
     """GAS Web API 経由で指定日の Excel ファイルを取得"""
+    date_str = target_date.strftime('%Y%m%d')
     try:
+        if "gas_api_url" not in st.secrets:
+            st.error("【設定エラー】Secretsに 'gas_api_url' が設定されていません。")
+            return None
+            
         gas_url = st.secrets["gas_api_url"]
-        date_str = target_date.strftime('%Y%m%d')
+        if not gas_url or not gas_url.startswith("http"):
+            st.error("【設定エラー】Secretsの 'gas_api_url' の形式が正しくありません。")
+            return None
+            
+        response = requests.get(gas_url, params={"date": date_str}, timeout=15)
         
-        response = requests.get(gas_url, params={"date": date_str}, timeout=10)
-        if response.status_code == 200 and response.text not in ["File Not Found", "Error: Date parameter missing"]:
-            # Base64デコードしてバイナリに戻す
-            file_bytes = base64.b64decode(response.text)
-            return io.BytesIO(file_bytes)
-        return None
+        if response.status_code != 200:
+            st.error(f"【GAS通信エラー】ステータスコード: {response.status_code}")
+            return None
+            
+        text = response.text.strip()
+        if text == "File Not Found":
+            st.warning(f"【GAS応答】{date_str} のファイルがDrive内で見つかりませんでした。")
+            return None
+        elif text == "Error: Date parameter missing":
+            st.error("【GAS応答】日付パラメータが不足しています。")
+            return None
+        elif text.startswith("<!DOCTYPE") or text.startswith("<html"):
+            st.error("【アクセス権限エラー】GASが認証画面(HTML)を返しています。GASのデプロイ管理で『アクセスできるユーザー』を『全員』に設定してください。")
+            return None
+            
+        # Base64デコードしてバイナリに戻す
+        file_bytes = base64.b64decode(text)
+        return io.BytesIO(file_bytes)
     except Exception as e:
-        print(f"[GAS Fetch Error] {e}")
+        st.error(f"【取得エラー】({date_str}): {e}")
         return None
 
 @st.cache_data(ttl=60)
@@ -149,6 +169,7 @@ def load_data_for_date(target_date):
         return pd.DataFrame(data_rows)
 
     except Exception as e:
+        st.error(f"【Excel解析エラー】({target_date}): {e}")
         return pd.DataFrame()
 
 def main():
